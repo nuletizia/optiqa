@@ -1,0 +1,5 @@
+# ignore files to avoid copying them to Docker containers
+
+**/node_modules/
+**/dist
+**/__pycache__

@@ -1,0 +1,185 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model DirectoryRating {
+  id              String         @id @default(cuid())
+  directoryPath   String
+  rating          Float
+  comparisons     Int
+  lastUpdated     DateTime       @default(now())
+  userId          String
+  organizationId  String
+  product         String
+  version         String
+  comparisonSetId String?
+  comparisonSet   ComparisonSet? @relation(fields: [comparisonSetId], references: [id], onUpdate: NoAction)
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([directoryPath])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([product])
+  @@index([version])
+  @@index([comparisonSetId])
+}
+
+model ComparisonResult {
+  id               String   @id @default(cuid())
+  createdAt        DateTime @default(now())
+  userId           String
+  directoryV1      String
+  directoryV2      String
+  scoreV1          Float
+  scoreV2          Float
+  totalComparisons Int
+  detailedResults  String?
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model User {
+  id                 String                   @id @default(cuid())
+  name               String?
+  email              String                   @unique
+  emailVerified      DateTime?
+  image              String?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  organizationId     String?
+  isActive           Boolean                  @default(false)
+  accounts           Account[]
+  comparisons        ComparisonResult[]
+  ratings            DirectoryRating[]
+  createdInviteCodes OrganizationInviteCode[]
+  sessions           Session[]
+  organization       Organization?            @relation(fields: [organizationId], references: [id])
+  organizations      UserOrganization[]
+
+  @@index([organizationId])
+}
+
+model UserOrganization {
+  id               String       @id @default(cuid())
+  userId           String
+  organizationId   String
+  isApprovedMember Boolean      @default(false)
+  isCurrentSession Boolean      @default(false)
+  isAdmin          Boolean      @default(false)
+  joinedAt         DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Organization {
+  id                String                   @id @default(cuid())
+  name              String                   @unique
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  directoryRatings  DirectoryRating[]
+  inviteCodes       OrganizationInviteCode[]
+  RenameOperation   RenameOperation[]
+  users             User[]
+  userOrganizations UserOrganization[]
+}
+
+model OrganizationInviteCode {
+  id             String       @id @default(cuid())
+  code           String       @unique
+  organizationId String
+  createdAt      DateTime     @default(now())
+  expiresAt      DateTime?
+  usageLimit     Int?
+  usageCount     Int          @default(0)
+  createdById    String?
+  createdBy      User?        @relation(fields: [createdById], references: [id], onUpdate: NoAction)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([organizationId])
+  @@index([createdById])
+}
+
+model ComparisonSet {
+  id             String            @id @default(cuid())
+  name           String
+  description    String?
+  directoryV1    String
+  directoryV2    String
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organizationId String
+  createdById    String
+  ratings        DirectoryRating[]
+
+  @@index([organizationId])
+  @@index([createdById])
+}
+
+model RenameOperation {
+  id               String       @id
+  organizationId   String
+  status           String
+  progress         Float        @default(0)
+  oldPath          String
+  newPath          String
+  processedObjects Int?
+  totalObjects     Int?
+  error            String?
+  startTime        DateTime     @default(now()) @db.Timestamptz(6)
+  endTime          DateTime?    @db.Timestamptz(6)
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @default(now()) @db.Timestamptz(6)
+  Organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([organizationId])
+  @@index([status])
+}

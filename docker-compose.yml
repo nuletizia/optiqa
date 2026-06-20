@@ -1,0 +1,24 @@
+# Local development database.
+# Started/stopped automatically by `mise run dev` (or `npm run db:up` / `db:down`).
+# Requires Docker Desktop to be running.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: optiqa-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: optiqa
+      POSTGRES_PASSWORD: optiqa
+      POSTGRES_DB: optiqa
+    ports:
+      - "5432:5432"
+    volumes:
+      - optiqa-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U optiqa -d optiqa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  optiqa-db-data:
