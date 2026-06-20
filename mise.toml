@@ -1,0 +1,49 @@
+# mise config — one-command local dev.
+#
+#   mise install         # install the pinned Node version
+#   mise run dev         # start DB (Docker) + apply schema + run the app
+#   mise run stop        # stop the local DB
+#
+# Requires Docker Desktop to be running (the database runs in a container).
+
+[tools]
+node = "20"
+
+# Load local env vars (DATABASE_URL, AWS_*, NEXTAUTH_*, …) so CLI tasks like
+# `prisma` see them too. Copy .env.example -> .env.local first.
+[env]
+_.file = ".env.local"
+
+[tasks.db-up]
+description = "Start the local Postgres container and wait until it's ready"
+run = "docker compose up -d --wait db"
+
+[tasks.db-down]
+description = "Stop the local Postgres container"
+run = "docker compose down"
+
+[tasks.db-reset]
+description = "Destroy and recreate the local database (wipes all data)"
+run = "docker compose down -v && docker compose up -d --wait db && npx prisma db push"
+
+[tasks.prisma]
+description = "Generate the Prisma client and push the schema to the DB"
+run = "npx prisma generate && npx prisma db push"
+
+[tasks.dev]
+description = "Start the database and the dev server"
+depends = ["db-up", "prisma"]
+run = "npm run dev"
+
+[tasks.stop]
+description = "Stop the local database"
+run = "docker compose down"
+
+[tasks.check]
+description = "Run lint, typecheck, tests and a production build"
+run = [
+  "npm run lint",
+  "npm run typecheck",
+  "npm test",
+  "npm run build",
+]
