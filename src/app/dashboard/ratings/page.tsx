@@ -1,6 +1,7 @@
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card"
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { normalizeDirectoryPath } from '@/lib/paths'
 import { RatingsDisplay } from '@/components/ratings/RatingsDisplay'
 
 export default async function RatingsPage() {
@@ -179,6 +180,22 @@ export default async function RatingsPage() {
       "lastUpdated" DESC
   `;
 
+  // Look up each set's batch labels so job-id comparisons display friendly
+  // names (the directory path ends in a/b) instead of the raw path segment.
+  const setMetas = await prisma.comparisonSet.findMany({
+    where: { organizationId: userMembership[0].organizationId },
+    select: { id: true, directoryV1: true, directoryV2: true, batchALabel: true, batchBLabel: true },
+  })
+  const setMetaById = new Map(setMetas.map(s => [s.id, s]))
+  const labelFor = (setId: string, directoryPath: string): string | undefined => {
+    const meta = setMetaById.get(setId)
+    if (!meta) return undefined
+    const norm = (p: string) => normalizeDirectoryPath(p)
+    if (norm(directoryPath) === norm(meta.directoryV1) && meta.batchALabel) return meta.batchALabel
+    if (norm(directoryPath) === norm(meta.directoryV2) && meta.batchBLabel) return meta.batchBLabel
+    return undefined
+  }
+
   // Group comparison set ratings by set and type (personal/aggregated)
   const comparisonSets = comparisonSetRatings.reduce((acc, rating) => {
     const type = rating.isPersonal ? 'personal' : 'aggregated';
@@ -199,6 +216,7 @@ export default async function RatingsPage() {
       lastUpdated: rating.lastUpdated.toISOString(),
       product: rating.product,
       version: rating.version,
+      displayName: labelFor(rating.id, rating.directoryPath) || rating.version,
       totalUsers: parseInt(rating.totalUsers),
       totalRatings: parseInt(rating.totalRatings)
     });

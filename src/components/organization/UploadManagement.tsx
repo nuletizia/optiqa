@@ -5,13 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
   Card,
   CardContent,
   CardDescription,
@@ -19,8 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Loader2, ArrowRight, ArrowLeft, Plus, Upload, X, FolderOpen, CheckCircle2 } from 'lucide-react'
+import { Loader2, ArrowRight, ArrowLeft, Upload, X, FolderOpen, CheckCircle2 } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
 import { uploadBatch, type FileUploadState } from '@/lib/upload'
 
@@ -30,17 +22,12 @@ interface Props {
 
 type Step = 'details' | 'upload' | 'done'
 
-interface Product {
-  name: string
-  path: string
-}
-
 const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
 const MAX_FILE_COUNT = 1000
 const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
-const PRODUCT_NAME_RE = /^[a-zA-Z0-9-]+$/
-const VERSION_NAME_RE = /^[a-zA-Z0-9_-]+$/
+// Display labels (comparison name + batch names) — metadata, not S3 segments.
+const LABEL_RE = /^[a-zA-Z0-9 _-]+$/
 
 // Keep only the basename — uploads flatten any dropped folder structure.
 const basename = (file: File) => file.name.split('/').pop() || file.name
@@ -245,73 +232,37 @@ function BatchUploader({ label, targetPath, hint, onComplete }: BatchUploaderPro
   )
 }
 
-export function UploadManagement({ organizationId }: Props) {
+export function UploadManagement({ organizationId: _organizationId }: Props) {
   const [step, setStep] = useState<Step>('details')
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // "Comparison" maps to an S3 product folder.
-  const [products, setProducts] = useState<Product[]>([])
-  const [isNewComparison, setIsNewComparison] = useState(true)
-  const [newComparisonName, setNewComparisonName] = useState('')
-  const [selectedComparison, setSelectedComparison] = useState<string | null>(null)
-  const [batchAName, setBatchAName] = useState('')
-  const [batchBName, setBatchBName] = useState('')
+  // Human-facing comparison name + batch labels — stored as metadata on the
+  // ComparisonSet, not in the S3 path (images go under an immutable job id).
+  const [comparisonName, setComparisonName] = useState('')
+  const [batchALabel, setBatchALabel] = useState('')
+  const [batchBLabel, setBatchBLabel] = useState('')
+  const [jobId, setJobId] = useState('')
 
   // Upload progress per batch.
   const [batchAUploaded, setBatchAUploaded] = useState(0)
   const [batchBUploaded, setBatchBUploaded] = useState(0)
 
-  // Comparison-set creation on the done screen.
-  const [createSet, setCreateSet] = useState(true)
-  const [setName, setSetName] = useState('')
   const [setCreated, setSetCreated] = useState(false)
   const [creatingSet, setCreatingSet] = useState(false)
 
-  useEffect(() => {
-    const loadProducts = async () => {
-      setLoading(true)
-      try {
-        const response = await fetch('/api/organization/products')
-        if (!response.ok) throw new Error('Failed to load comparisons')
-        const data = await response.json()
-        if (!data.success) throw new Error(data.error || 'Failed to load comparisons')
-        setProducts(data.products)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load comparisons')
-      } finally {
-        setLoading(false)
-      }
-    }
-    loadProducts()
-  }, [organizationId])
-
-  const comparisonName = isNewComparison ? newComparisonName : (selectedComparison ?? '')
-
   const handleDetailsNext = () => {
-    if (isNewComparison) {
-      if (!newComparisonName.trim()) return setError('Please name the comparison')
-      if (!PRODUCT_NAME_RE.test(newComparisonName)) return setError('Comparison name can only contain letters, numbers, and hyphens')
-      if (products.some(p => p.name.toLowerCase() === newComparisonName.toLowerCase()))
-        return setError('A comparison with this name already exists')
-    } else if (!selectedComparison) {
-      return setError('Please select a comparison')
-    }
-    if (!batchAName.trim() || !batchBName.trim()) return setError('Please name both batches')
-    if (!VERSION_NAME_RE.test(batchAName) || !VERSION_NAME_RE.test(batchBName))
-      return setError('Batch names can only contain letters, numbers, underscores, and hyphens')
-    if (batchAName === batchBName) return setError('The two batches must have different names')
+    if (!comparisonName.trim()) return setError('Please name the comparison')
+    if (!LABEL_RE.test(comparisonName)) return setError('Name can only contain letters, numbers, spaces, hyphens, and underscores')
+    if (!batchALabel.trim() || !batchBLabel.trim()) return setError('Please name both batches')
+    if (!LABEL_RE.test(batchALabel) || !LABEL_RE.test(batchBLabel))
+      return setError('Batch names can only contain letters, numbers, spaces, hyphens, and underscores')
 
     setError(null)
-    setSetName(comparisonName)
+    setJobId(crypto.randomUUID())
     setStep('upload')
   }
 
   const handleFinish = async () => {
-    if (!createSet) {
-      setStep('done')
-      return
-    }
     setCreatingSet(true)
     setError(null)
     try {
@@ -319,10 +270,10 @@ export function UploadManagement({ organizationId }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: setName || comparisonName,
-          product: comparisonName,
-          versionA: batchAName,
-          versionB: batchBName,
+          name: comparisonName,
+          jobId,
+          batchALabel,
+          batchBLabel,
         }),
       })
       const data = await response.json()
@@ -338,25 +289,14 @@ export function UploadManagement({ organizationId }: Props) {
 
   const resetWizard = () => {
     setStep('details')
-    setIsNewComparison(true)
-    setNewComparisonName('')
-    setSelectedComparison(null)
-    setBatchAName('')
-    setBatchBName('')
+    setComparisonName('')
+    setBatchALabel('')
+    setBatchBLabel('')
+    setJobId('')
     setBatchAUploaded(0)
     setBatchBUploaded(0)
-    setCreateSet(true)
-    setSetName('')
     setSetCreated(false)
     setError(null)
-  }
-
-  if (loading && products.length === 0) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    )
   }
 
   const bothUploaded = batchAUploaded > 0 && batchBUploaded > 0
@@ -367,7 +307,7 @@ export function UploadManagement({ organizationId }: Props) {
         <CardHeader>
           <CardTitle>Set up a comparison</CardTitle>
           <CardDescription>
-            Upload two batches of images — version A and version B — so your team can vote on which is higher quality.
+            Upload two batches of images — Batch A and Batch B — so your team can vote on which is higher quality.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -377,54 +317,25 @@ export function UploadManagement({ organizationId }: Props) {
 
           {step === 'details' && (
             <div className="space-y-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-medium">What are you comparing?</h3>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setIsNewComparison(!isNewComparison)
-                      setSelectedComparison(null)
-                      setNewComparisonName('')
-                    }}
-                  >
-                    {isNewComparison ? 'Use existing comparison' : (
-                      <><Plus className="h-4 w-4 mr-2" /> New comparison</>
-                    )}
-                  </Button>
-                </div>
-
-                {isNewComparison ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="comparison">Comparison name</Label>
-                    <Input
-                      id="comparison"
-                      value={newComparisonName}
-                      onChange={e => setNewComparisonName(e.target.value)}
-                      placeholder="e.g. portraits-q3"
-                    />
-                    <p className="text-sm text-muted-foreground">Letters, numbers, and hyphens only.</p>
-                  </div>
-                ) : (
-                  <Select value={selectedComparison ?? ''} onValueChange={setSelectedComparison}>
-                    <SelectTrigger><SelectValue placeholder="Select a comparison" /></SelectTrigger>
-                    <SelectContent>
-                      {products.map(p => (
-                        <SelectItem key={p.path} value={p.name}>{p.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+              <div className="space-y-2">
+                <Label htmlFor="comparison">Comparison name</Label>
+                <Input
+                  id="comparison"
+                  value={comparisonName}
+                  onChange={e => setComparisonName(e.target.value)}
+                  placeholder="e.g. Portraits Q3"
+                />
+                <p className="text-sm text-muted-foreground">Shown to your team. Images are stored under a private job id, so reusing a name never overwrites anything.</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="batchA">Batch A name</Label>
-                  <Input id="batchA" value={batchAName} onChange={e => setBatchAName(e.target.value)} placeholder="e.g. baseline" />
+                  <Input id="batchA" value={batchALabel} onChange={e => setBatchALabel(e.target.value)} placeholder="e.g. Baseline" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="batchB">Batch B name</Label>
-                  <Input id="batchB" value={batchBName} onChange={e => setBatchBName(e.target.value)} placeholder="e.g. new-model" />
+                  <Input id="batchB" value={batchBLabel} onChange={e => setBatchBLabel(e.target.value)} placeholder="e.g. New model" />
                 </div>
               </div>
 
@@ -445,13 +356,13 @@ export function UploadManagement({ organizationId }: Props) {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <BatchUploader
-                  label={`Batch A — ${batchAName}`}
-                  targetPath={`${comparisonName}/${batchAName}`}
+                  label={`Batch A — ${batchALabel}`}
+                  targetPath={`jobs/${jobId}/a`}
                   onComplete={setBatchAUploaded}
                 />
                 <BatchUploader
-                  label={`Batch B — ${batchBName}`}
-                  targetPath={`${comparisonName}/${batchBName}`}
+                  label={`Batch B — ${batchBLabel}`}
+                  targetPath={`jobs/${jobId}/b`}
                   hint="Reuse Batch A's filenames so images pair up by name during evaluation."
                   onComplete={setBatchBUploaded}
                 />
@@ -459,25 +370,10 @@ export function UploadManagement({ organizationId }: Props) {
 
               <div className="flex justify-end">
                 <Button onClick={handleFinish} disabled={!bothUploaded || creatingSet}>
-                  {creatingSet ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Finishing…</> : 'Finish'}
+                  {creatingSet ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Finishing…</> : 'Finish & create comparison'}
                   {!creatingSet && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>
               </div>
-
-              {bothUploaded && (
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Checkbox id="createSet" checked={createSet} onCheckedChange={v => setCreateSet(Boolean(v))} />
-                    <Label htmlFor="createSet">Create a comparison set so members can evaluate right away</Label>
-                  </div>
-                  {createSet && (
-                    <div className="space-y-2">
-                      <Label htmlFor="setName">Comparison set name</Label>
-                      <Input id="setName" value={setName} onChange={e => setSetName(e.target.value)} />
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
@@ -487,7 +383,7 @@ export function UploadManagement({ organizationId }: Props) {
               <div>
                 <h3 className="text-lg font-medium">Comparison ready</h3>
                 <p className="text-sm text-muted-foreground">
-                  Uploaded {batchAUploaded} image(s) to Batch A and {batchBUploaded} to Batch B.
+                  Uploaded {batchAUploaded} image(s) to “{batchALabel}” and {batchBUploaded} to “{batchBLabel}”.
                   {setCreated && ' Members can now evaluate it from the comparison sets.'}
                 </p>
               </div>

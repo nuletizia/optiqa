@@ -59,6 +59,10 @@ export async function GET() {
       version: string;
       comparisonSetId: string;
       comparisonSetName: string;
+      directoryV1: string;
+      directoryV2: string;
+      batchALabel: string | null;
+      batchBLabel: string | null;
     }>>`
       SELECT
         dr."directoryPath",
@@ -69,7 +73,11 @@ export async function GET() {
         dr.product,
         dr.version,
         dr."comparisonSetId",
-        cs.name as "comparisonSetName"
+        cs.name as "comparisonSetName",
+        cs."directoryV1",
+        cs."directoryV2",
+        cs."batchALabel",
+        cs."batchBLabel"
       FROM "DirectoryRating" dr
       JOIN "ComparisonSet" cs ON cs.id = dr."comparisonSetId"
       WHERE dr."userId" = ${session.user.id}
@@ -77,6 +85,19 @@ export async function GET() {
       AND dr."comparisonSetId" IS NOT NULL
       ORDER BY dr."lastUpdated" DESC
     `;
+
+    // Resolve a friendly display name for each set rating: the set's batch label
+    // when present (job-id comparisons), else the version path segment.
+    const setRatingDisplayName = (r: {
+      directoryPath: string; version: string;
+      directoryV1: string; directoryV2: string;
+      batchALabel: string | null; batchBLabel: string | null;
+    }): string => {
+      const norm = (p: string) => normalizeDirectoryPath(p);
+      if (norm(r.directoryPath) === norm(r.directoryV1) && r.batchALabel) return r.batchALabel;
+      if (norm(r.directoryPath) === norm(r.directoryV2) && r.batchBLabel) return r.batchBLabel;
+      return r.version;
+    };
 
     // Group comparison set ratings
     const comparisonSetWeightedRatings = comparisonSetRatings.reduce((acc, curr) => {
@@ -94,7 +115,8 @@ export async function GET() {
         totalComparisons: curr.comparisons,
         lastUpdated: curr.lastUpdated.toISOString(),
         product: curr.product,
-        version: curr.version
+        version: curr.version,
+        displayName: setRatingDisplayName(curr)
       });
 
       return acc;
@@ -108,6 +130,7 @@ export async function GET() {
         lastUpdated: string;
         product: string;
         version: string;
+        displayName: string;
       }>;
     }>);
 

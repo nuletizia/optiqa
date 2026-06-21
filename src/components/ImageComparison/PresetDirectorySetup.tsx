@@ -34,6 +34,8 @@ interface ComparisonSet {
   description: string | null;
   directoryV1: string;
   directoryV2: string;
+  batchALabel?: string | null;
+  batchBLabel?: string | null;
   createdAt: string;
   createdBy: {
     name: string | null;
@@ -215,15 +217,17 @@ export const PresetDirectorySetup = ({
     setLoading(true);
     setError(null);
     try {
-      // Extract directory names from paths - just take the last part
-      const getDirectoryName = (path: string) => {
+      // Prefer the set's batch labels (job-id comparisons store names as
+      // metadata); fall back to the last path segment for legacy name-based sets.
+      const getDirectoryName = (path: string, label?: string | null) => {
+        if (label && label.trim()) return label;
         const parts = path.split('/').filter(Boolean);
         return parts[parts.length - 1] || '';
       };
 
       // Load directory 1
       await handleDirectorySelect('v1', {
-        name: getDirectoryName(set.directoryV1),
+        name: getDirectoryName(set.directoryV1, set.batchALabel),
         path: set.directoryV1,
         count: 0, // This will be updated when loading the directory
         product: set.directoryV1.split('/')[1] || ''
@@ -231,7 +235,7 @@ export const PresetDirectorySetup = ({
 
       // Load directory 2
       await handleDirectorySelect('v2', {
-        name: getDirectoryName(set.directoryV2),
+        name: getDirectoryName(set.directoryV2, set.batchBLabel),
         path: set.directoryV2,
         count: 0, // This will be updated when loading the directory
         product: set.directoryV2.split('/')[1] || ''

@@ -353,7 +353,7 @@ function ComparisonSetRatingsList({ comparisonSets }: { comparisonSets: Comparis
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between">
                     <div className="break-all">
-                      <p className="text-sm font-medium text-primary">{rating.directoryPath.split('/').filter(Boolean).pop()}</p>
+                      <p className="text-sm font-medium text-primary">{rating.displayName || rating.directoryPath.split('/').filter(Boolean).pop()}</p>
                       <p className="text-xs text-muted-foreground mt-1 font-mono">{rating.directoryPath}</p>
                       <div className="flex items-center gap-2 mt-1">
                         <Badge variant="secondary">{rating.product}</Badge>
@@ -481,7 +481,7 @@ export function RatingsDisplay({ personalRatings, organizationRatings, compariso
                         <CardContent className="p-6">
                           <div className="flex items-start justify-between">
                             <div className="break-all">
-                              <p className="text-sm font-medium text-primary">{rating.directoryPath.split('/').filter(Boolean).pop()}</p>
+                              <p className="text-sm font-medium text-primary">{rating.displayName || rating.directoryPath.split('/').filter(Boolean).pop()}</p>
                               <p className="text-xs text-muted-foreground mt-1 font-mono">{rating.directoryPath}</p>
                               <div className="flex items-center gap-2 mt-1">
                                 <Badge variant="secondary">{product.product}</Badge>
@@ -524,7 +524,7 @@ export function RatingsDisplay({ personalRatings, organizationRatings, compariso
                     <CardContent className="p-6">
                       <div className="flex items-start justify-between">
                         <div className="break-all">
-                          <p className="text-sm font-medium text-primary">{rating.directoryPath.split('/').filter(Boolean).pop()}</p>
+                          <p className="text-sm font-medium text-primary">{rating.displayName || rating.directoryPath.split('/').filter(Boolean).pop()}</p>
                           <p className="text-xs text-muted-foreground mt-1 font-mono">{rating.directoryPath}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <Badge variant="secondary">{rating.product}</Badge>

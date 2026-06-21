@@ -4,14 +4,14 @@ import { getActiveOrganization } from '@/lib/auth/organization';
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 
-const SEGMENT_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const JOB_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
 
 /**
  * Create a ComparisonSet directly from two freshly-uploaded batches.
  *
- * The upload wizard knows a comparison only as `product` + two version names;
- * it does not (and should not) know the organization's S3 prefix. We build the
- * canonical `{org}/{product}/{version}/` directory paths here, server-side, so
+ * Uploads land under an immutable job prefix `{org}/jobs/{jobId}/a|b/`, so the
+ * comparison's human names (set name + batch labels) live here as metadata, not
+ * in the folder names. We build the canonical directory paths server-side so
  * they match exactly what the directories API and the evaluation flow expect.
  */
 export async function POST(request: Request) {
@@ -38,28 +38,24 @@ export async function POST(request: Request) {
       );
     }
 
-    const { name, description, product, versionA, versionB } = await request.json();
+    const { name, description, jobId, batchALabel, batchBLabel } = await request.json();
 
-    if (!name || !product || !versionA || !versionB) {
+    if (!name || !jobId) {
       return NextResponse.json(
-        { success: false, error: 'Please provide name, product, versionA and versionB' },
+        { success: false, error: 'Please provide name and jobId' },
         { status: 400 },
       );
     }
-    if (
-      !SEGMENT_PATTERN.test(product) ||
-      !SEGMENT_PATTERN.test(versionA) ||
-      !SEGMENT_PATTERN.test(versionB)
-    ) {
+    if (!JOB_ID_PATTERN.test(jobId)) {
       return NextResponse.json(
-        { success: false, error: 'Invalid product or version name' },
+        { success: false, error: 'Invalid job id' },
         { status: 400 },
       );
     }
 
     const orgPrefix = activeOrg.organizationName.toLowerCase();
-    const directoryV1 = `${orgPrefix}/${product}/${versionA}/`;
-    const directoryV2 = `${orgPrefix}/${product}/${versionB}/`;
+    const directoryV1 = `${orgPrefix}/jobs/${jobId}/a/`;
+    const directoryV2 = `${orgPrefix}/jobs/${jobId}/b/`;
 
     const comparisonSet = await prisma.comparisonSet.create({
       data: {
@@ -67,6 +63,8 @@ export async function POST(request: Request) {
         description: description || null,
         directoryV1,
         directoryV2,
+        batchALabel: batchALabel || null,
+        batchBLabel: batchBLabel || null,
         organizationId: activeOrg.organizationId,
         createdById: session.user.id,
       },

@@ -26,7 +26,9 @@ export async function listVersionDirectories(
   const productPrefixes = await listCommonPrefixes(`${organizationPath}/`)
   const products = productPrefixes
     .map((prefix) => prefix.split('/')[1])
-    .filter((product): product is string => Boolean(product))
+    // `jobs/` holds job-id comparisons addressed only via ComparisonSets — never
+    // surface it as a browsable product.
+    .filter((product): product is string => Boolean(product) && product !== 'jobs')
 
   const allDirectories = await Promise.all(
     products.map(async (product) => {
