@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:local": "docker compose up -d --wait db && prisma generate && prisma db push && next dev",
+    "dev:brew": "bash scripts/dev-brew.sh",
     "db:up": "docker compose up -d --wait db",
     "db:down": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d --wait db && prisma db push",
