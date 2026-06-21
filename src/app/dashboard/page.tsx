@@ -31,38 +31,7 @@ export default function Dashboard() {
             )}
           </CardHeader>
           <CardContent className="space-y-8">
-            {/* Org members: the comparisons available to grade */}
-            {hasOrganization && (
-              <>
-                <ComparisonsToGrade />
-                <Separator />
-              </>
-            )}
-
-            {/* Primary Action — ad-hoc comparison without a preset set */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Start an ad-hoc comparison</CardTitle>
-                <CardDescription>Compare two folders directly without setting up a comparison first</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Link href="/comparison">
-                  <Button className="w-full" size="lg">Start ad-hoc comparison</Button>
-                </Link>
-              </CardContent>
-            </Card>
-
-            {/* Separator with "or" */}
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">or</span>
-              </div>
-            </div>
-
-            {/* Secondary Actions - Different based on organization membership */}
+            {/* Usual actions - Different based on organization membership */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {hasOrganization ? (
                 <>
@@ -130,6 +99,23 @@ export default function Dashboard() {
                 </>
               )}
             </div>
+
+            {/* Ad-hoc entry — small inline link into the comparison engine */}
+            <p className="text-center text-sm text-muted-foreground">
+              Just need a one-off check?{' '}
+              <Link href="/comparison" className="text-primary underline underline-offset-4">
+                Compare two folders directly
+              </Link>
+              .
+            </p>
+
+            {/* Org members: comparisons available to grade (at the bottom) */}
+            {hasOrganization && (
+              <>
+                <Separator />
+                <ComparisonsToGrade />
+              </>
+            )}
           </CardContent>
         </Card>
       </main>

@@ -83,16 +83,20 @@ export function DashboardHeader() {
               <span className="text-xl font-bold">OptiQA</span>
             </Link>
             <div className="flex items-center gap-4">
-              <Link
-                href="/comparison"
-                className={`text-sm ${
-                  pathname === "/comparison"
-                    ? "text-[#00B4D8] font-medium"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Grade
-              </Link>
+              {/* Anonymous-only entry to the public comparison engine. Signed-in
+                  users reach it from the dashboard (grade cards + ad-hoc link). */}
+              {!session && (
+                <Link
+                  href="/comparison"
+                  className={`text-sm ${
+                    pathname === "/comparison"
+                      ? "text-[#00B4D8] font-medium"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  Compare
+                </Link>
+              )}
               {session && (
                 <>
                   <Link
