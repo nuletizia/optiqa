@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { FolderOpen, Settings } from "lucide-react";
 import { SetupModeSelection } from './SetupModeSelection';
 import type { DirectoryState, ImageFile } from './types';
+import type { MatchStats } from './hooks/useImageComparison';
 import { PresetDirectorySetup } from './PresetDirectorySetup';
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +22,7 @@ interface DirectorySetupProps {
   imageFiles: DirectoryState;
   directoryNames: { v1: string; v2: string };
   useMatchedPairs: boolean;
+  matchStats: MatchStats;
   useScoreBlur: boolean;
   onDirectorySetup: (version: 'v1' | 'v2', files: ImageFile[], directoryPath?: string) => Promise<void>;
   onNameUpdate: (version: 'v1' | 'v2', name: string) => void;
@@ -41,6 +43,7 @@ export const DirectorySetup = ({
   imageFiles,
   directoryNames,
   useMatchedPairs,
+  matchStats,
   useScoreBlur,
   onDirectorySetup,
   onNameUpdate,
@@ -59,6 +62,33 @@ export const DirectorySetup = ({
   if (!setupMode) {
     return <SetupModeSelection onModeSelect={onSetupModeChange} />;
   }
+
+  // Honest, robust version of the old upload-time "pattern" warning: shown once
+  // both batches are loaded and name-matching is on, computed from the actual
+  // files that will be paired.
+  const bothLoaded = imageFiles.v1.length > 0 && imageFiles.v2.length > 0;
+  const matchBanner = useMatchedPairs && bothLoaded ? (
+    <div
+      className={`rounded-lg border p-3 text-sm ${
+        matchStats.matched === 0
+          ? 'border-red-200 bg-red-50 text-red-700'
+          : 'border-blue-200 bg-blue-50 text-blue-700'
+      }`}
+    >
+      {matchStats.matched === 0 ? (
+        <>No images paired by name. Batch B must reuse Batch A&apos;s filenames (extensions are ignored), or turn off &quot;Match Images&quot; to compare random pairs.</>
+      ) : (
+        <>
+          <span className="font-medium">{matchStats.matched}</span> image pair
+          {matchStats.matched === 1 ? '' : 's'} matched by name.
+          {(matchStats.unmatchedA > 0 || matchStats.unmatchedB > 0) && (
+            <> {matchStats.unmatchedA + matchStats.unmatchedB} unmatched image
+              {matchStats.unmatchedA + matchStats.unmatchedB === 1 ? '' : 's'} will be skipped.</>
+          )}
+        </>
+      )}
+    </div>
+  ) : null;
 
   if (setupMode === 'preset') {
     return (
@@ -107,6 +137,8 @@ export const DirectorySetup = ({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {matchBanner}
 
         <PresetDirectorySetup
           imageFiles={imageFiles}
@@ -229,6 +261,8 @@ export const DirectorySetup = ({
           </CardContent>
         </Card>
       </div>
+
+      {matchBanner}
 
       {/* Add Start Button Section */}
       {imageFiles.v1.length > 0 && imageFiles.v2.length > 0 && (

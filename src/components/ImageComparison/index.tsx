@@ -20,6 +20,7 @@ export const ImageComparison = () => {
     currentPair,
     error,
     useMatchedPairs,
+    matchStats,
     currentPairIndex,
     totalPairs,
     setDirectoryNames,
@@ -102,6 +103,7 @@ export const ImageComparison = () => {
               imageFiles={imageFiles}
               directoryNames={directoryNames}
               useMatchedPairs={useMatchedPairs}
+              matchStats={matchStats}
               useScoreBlur={useScoreBlur}
               onDirectorySetup={setupDirectory}
               onNameUpdate={(version, name) => 

@@ -6,6 +6,12 @@ import { logger } from '@/lib/logger';
 
 const ALLOWED_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
+// `path` is a `product/version` prefix; both segments use the same charset the
+// upload UI enforces. `fileName` must be a bare basename (no separators, no
+// traversal) so the final S3 key cannot escape the organization prefix.
+const PATH_PATTERN = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/;
+const FILE_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/;
+
 export async function POST(request: Request) {
   try {
     const session = await auth();
@@ -45,6 +51,13 @@ export async function POST(request: Request) {
           success: false,
           error: `Only ${ALLOWED_CONTENT_TYPES.join(', ')} files are allowed`,
         },
+        { status: 400 },
+      );
+    }
+
+    if (!PATH_PATTERN.test(path) || !FILE_NAME_PATTERN.test(fileName) || fileName.includes('..')) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid upload path or file name' },
         { status: 400 },
       );
     }

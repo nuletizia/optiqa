@@ -16,7 +16,7 @@ declare global {
   }
 }
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { DirectoryState, ComparisonPair, ImageFile } from '../types';
 import { useZoomPan } from './useZoomPan';
 import { useBradleyTerry } from './useBradleyTerry';
@@ -43,6 +43,30 @@ const shuffleArray = <T>(array: T[]): T[] => {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled;
+};
+
+// Base filename without extension — the key used to pair Batch A with Batch B.
+const matchKey = (file: ImageFile) => file.name.split('/').pop()?.split('.')[0] || '';
+
+export interface MatchStats {
+  matched: number;
+  unmatchedA: number;
+  unmatchedB: number;
+}
+
+// How many images pair up by name across the two batches, and how many are
+// left unmatched on each side. Surfaced before the user starts so the filename
+// contract is honest (no fragile upload-time enforcement needed).
+const computeMatchStats = (v1Files: ImageFile[], v2Files: ImageFile[]): MatchStats => {
+  const v1Keys = new Set(v1Files.map(matchKey));
+  const v2Keys = new Set(v2Files.map(matchKey));
+  let matched = 0;
+  v1Keys.forEach(key => { if (v2Keys.has(key)) matched++; });
+  return {
+    matched,
+    unmatchedA: v1Keys.size - matched,
+    unmatchedB: v2Keys.size - matched,
+  };
 };
 
 // Generate all possible pairs
@@ -496,6 +520,11 @@ export const useImageComparison = (zoomPanState: ReturnType<typeof useZoomPan>) 
     return { personal: [], global: [] };
   };
 
+  const matchStats = useMemo(
+    () => computeMatchStats(imageFiles.v1, imageFiles.v2),
+    [imageFiles.v1, imageFiles.v2],
+  );
+
   return {
     scores,
     directoryNames,
@@ -503,6 +532,7 @@ export const useImageComparison = (zoomPanState: ReturnType<typeof useZoomPan>) 
     currentPair,
     error,
     useMatchedPairs,
+    matchStats,
     currentPairIndex,
     totalPairs: pairs.length,
     setDirectoryNames,

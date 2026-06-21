@@ -54,14 +54,10 @@ export async function GET(
           .filter(Boolean);
 
         if (files.length > 0) {
-          // Extract pattern from first file
-          const pattern = files[0].replace(/\d+/, '*');
-
           return {
             name: versionName,
             path: prefix,
             files,
-            pattern,
             fileCount: files.length
           };
         }

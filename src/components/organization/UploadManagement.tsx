@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,591 +19,337 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Loader2, ArrowRight, Plus, Upload, X } from 'lucide-react'
+import { Checkbox } from "@/components/ui/checkbox"
+import { Loader2, ArrowRight, ArrowLeft, Plus, Upload, X, FolderOpen, CheckCircle2 } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
+import { uploadBatch, type FileUploadState } from '@/lib/upload'
 
 interface Props {
   organizationId: string
 }
 
-type Step = 'product' | 'version' | 'upload'
-
-interface Version {
-  name: string;
-  path: string;
-  files: string[];
-  pattern: string;
-  fileCount: number;
-}
+type Step = 'details' | 'upload' | 'done'
 
 interface Product {
-  name: string;
-  path: string;
-  filePattern?: string;
-  sampleFiles?: string[];
+  name: string
+  path: string
 }
 
-interface UploadingFile {
-  file: File;
-  progress: number;
-  status: 'pending' | 'uploading' | 'completed' | 'error';
-  error?: string;
+const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
+const MAX_FILE_COUNT = 1000
+const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+
+const PRODUCT_NAME_RE = /^[a-zA-Z0-9-]+$/
+const VERSION_NAME_RE = /^[a-zA-Z0-9_-]+$/
+
+// Keep only the basename — uploads flatten any dropped folder structure.
+const basename = (file: File) => file.name.split('/').pop() || file.name
+
+function validateIncoming(
+  incoming: File[],
+  existingCount: number,
+): { valid: File[]; error: string | null } {
+  if (existingCount + incoming.length > MAX_FILE_COUNT) {
+    return { valid: [], error: `Maximum number of files allowed is ${MAX_FILE_COUNT}` }
+  }
+  for (const file of incoming) {
+    if (file.size > MAX_FILE_SIZE) {
+      return { valid: [], error: `File ${file.name} is too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB` }
+    }
+    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+      return { valid: [], error: `File ${file.name} has an unsupported type. Allowed: JPG, PNG, GIF, WebP` }
+    }
+  }
+  return { valid: incoming, error: null }
 }
 
-// Add constants for file limits
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-const MAX_FILE_COUNT = 50; // Maximum number of files that can be uploaded at once
-const ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+interface BatchUploaderProps {
+  label: string
+  targetPath: string
+  hint?: string
+  onComplete: (successCount: number) => void
+}
 
-export function UploadManagement({ organizationId }: Props) {
-  const [currentStep, setCurrentStep] = useState<Step>('product')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [products, setProducts] = useState<Product[]>([])
-  const [selectedProduct, setSelectedProduct] = useState<string | null>(null)
-  const [newProductName, setNewProductName] = useState('')
-  const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false)
-  const [versionName, setVersionName] = useState('')
-  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([])
+/** Drop / pick a folder of images and upload them in parallel to `targetPath`. */
+function BatchUploader({ label, targetPath, hint, onComplete }: BatchUploaderProps) {
+  const [files, setFiles] = useState<File[]>([])
+  const [states, setStates] = useState<FileUploadState[]>([])
   const [isUploading, setIsUploading] = useState(false)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [existingFiles, setExistingFiles] = useState<string[]>([]);
-  const [filePattern, setFilePattern] = useState<string>('');
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [selectedVersion, setSelectedVersion] = useState<Version | null>(null);
+  const [aggregate, setAggregate] = useState({ total: 0, completed: 0, failed: 0 })
+  const [error, setError] = useState<string | null>(null)
+  const [finishedCount, setFinishedCount] = useState<number | null>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
-  // Load existing products
+  // <input webkitdirectory> isn't a typed React prop — set it imperatively.
   useEffect(() => {
-    const loadProducts = async () => {
-      setLoading(true)
-      try {
-        const response = await fetch('/api/organization/products');
-        if (!response.ok) throw new Error('Failed to load products');
-        const data = await response.json();
-        
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to load products');
-        }
-
-        setProducts(data.products);
-      } catch (err) {
-        console.error('Error loading products:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load products')
-      } finally {
-        setLoading(false)
-      }
+    if (folderInputRef.current) {
+      folderInputRef.current.setAttribute('webkitdirectory', '')
+      folderInputRef.current.setAttribute('directory', '')
     }
+  }, [])
 
-    loadProducts()
-  }, [organizationId])
-
-  // Modify loadExistingFiles to load all versions
-  const loadExistingFiles = async (productName: string) => {
-    try {
-      const response = await fetch(`/api/organization/products/${productName}/files`);
-      if (!response.ok) throw new Error('Failed to load existing files');
-      const data = await response.json();
-      
-      if (data.versions && data.versions.length > 0) {
-        setVersions(data.versions);
-        setExistingFiles([]);
-        setFilePattern('');
-      } else {
-        setVersions([]);
-        setExistingFiles([]);
-        setFilePattern('');
+  const addFiles = useCallback((incoming: File[]) => {
+    setError(null)
+    setFinishedCount(null)
+    setFiles(prev => {
+      const images = incoming.filter(f => ALLOWED_FILE_TYPES.includes(f.type))
+      const { valid, error: validationError } = validateIncoming(images, prev.length)
+      if (validationError) {
+        setError(validationError)
+        return prev
       }
-    } catch (err) {
-      console.error('Error loading existing files:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load existing files');
-    }
-  };
+      // De-duplicate by basename so a file isn't uploaded twice.
+      const seen = new Set(prev.map(basename))
+      const deduped = valid.filter(f => !seen.has(basename(f)))
+      return [...prev, ...deduped]
+    })
+  }, [])
 
-  // Add version selection handler
-  const handleVersionSelect = (version: Version) => {
-    setSelectedVersion(version);
-    setExistingFiles(version.files);
-    setFilePattern(version.pattern);
-  };
-
-  // Modify product selection handler
-  const handleProductSelect = (productName: string) => {
-    setSelectedProduct(productName);
-    loadExistingFiles(productName);
-  };
-
-  // Add filename validation to onDrop
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    // Check total number of files
-    if (uploadingFiles.length + acceptedFiles.length > MAX_FILE_COUNT) {
-      setError(`Maximum number of files allowed is ${MAX_FILE_COUNT}`);
-      return;
-    }
-
-    // First do the existing validations
-    const validFiles = acceptedFiles.filter(file => {
-      if (file.size > MAX_FILE_SIZE) {
-        setError(`File ${file.name} is too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB`);
-        return false;
-      }
-
-      if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-        setError(`File ${file.name} has unsupported type. Allowed types are: JPG, PNG, GIF, WebP`);
-        return false;
-      }
-
-      // If there's a file pattern, validate against it
-      if (filePattern && existingFiles.length > 0) {
-        const pattern = filePattern.replace('*', '\\d+');
-        const regex = new RegExp(pattern);
-        if (!regex.test(file.name)) {
-          setError(`File ${file.name} doesn't match the required pattern: ${filePattern}`);
-          return false;
-        }
-      }
-
-      return true;
-    });
-
-    const newFiles = validFiles.map(file => ({
-      file,
-      progress: 0,
-      status: 'pending' as const
-    }));
-
-    setUploadingFiles(prev => [...prev, ...newFiles]);
-  }, [filePattern, existingFiles]);
+  const onDrop = useCallback((accepted: File[]) => addFiles(accepted), [addFiles])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: {
-      'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-    }
-  });
+    accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp'] },
+  })
 
-  const removeFile = (file: File) => {
-    setUploadingFiles(prev => prev.filter(f => f.file !== file));
-  };
-
-  const uploadFiles = async () => {
-    setIsUploading(true);
-    setError(null);
-    setSuccessMessage(null);
-
-    const productPath = isCreatingNewProduct ? newProductName : selectedProduct;
-    const targetPath = `${productPath}/${versionName}`;
-    let successCount = 0;
-    let failureCount = 0;
-
-    for (const fileData of uploadingFiles) {
-      if (fileData.status === 'completed') continue;
-
-      try {
-        // Update file status to uploading
-        setUploadingFiles(prev => prev.map(f => 
-          f.file === fileData.file ? { ...f, status: 'uploading', progress: 10 } : f
-        ));
-
-        // Get presigned URL
-        const presignedResponse = await fetch('/api/organization/upload/presigned', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileName: fileData.file.name,
-            contentType: fileData.file.type,
-            path: targetPath
-          })
-        });
-
-        if (!presignedResponse.ok) {
-          throw new Error('Failed to get upload URL');
-        }
-
-        const data = await presignedResponse.json();
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to get upload URL');
-        }
-
-        setUploadingFiles(prev => prev.map(f => 
-          f.file === fileData.file ? { ...f, progress: 30 } : f
-        ));
-
-        // Upload directly to S3
-        const uploadResponse = await fetch(data.url, {
-          method: 'PUT',
-          body: fileData.file,
-          headers: {
-            'Content-Type': fileData.file.type
-          }
-        });
-
-        if (!uploadResponse.ok) {
-          throw new Error('Failed to upload file');
-        }
-
-        // Update file status to completed
-        setUploadingFiles(prev => prev.map(f => 
-          f.file === fileData.file ? { ...f, status: 'completed', progress: 100 } : f
-        ));
-        successCount++;
-
-      } catch (err) {
-        console.error('Error uploading file:', err);
-        setUploadingFiles(prev => prev.map(f => 
-          f.file === fileData.file ? {
-            ...f,
-            status: 'error',
-            error: err instanceof Error ? err.message : 'Upload failed',
-            progress: 0
-          } : f
-        ));
-        failureCount++;
-      }
-    }
-
-    setIsUploading(false);
-
-    // Show success message and redirect after a delay if all files uploaded successfully
-    if (successCount > 0) {
-      const message = failureCount === 0 
-        ? `Successfully uploaded ${successCount} ${successCount === 1 ? 'file' : 'files'}`
-        : `Uploaded ${successCount} ${successCount === 1 ? 'file' : 'files'}, ${failureCount} failed`;
-      
-      setSuccessMessage(message);
-
-      if (failureCount === 0) {
-        // Clear only the files list on complete success
-        setUploadingFiles(prev => prev.map(f => ({ ...f, status: 'completed' })));
-      }
-    }
-  };
-
-  const handleProductStep = () => {
-    if (isCreatingNewProduct) {
-      // Validate new product name
-      if (!newProductName.trim()) {
-        setError('Please enter a product name');
-        return;
-      }
-      if (!/^[a-zA-Z0-9-]+$/.test(newProductName)) {
-        setError('Product name can only contain letters, numbers, and hyphens');
-        return;
-      }
-      if (products.some(p => p.name.toLowerCase() === newProductName.toLowerCase())) {
-        setError('Product with this name already exists');
-        return;
-      }
-    } else {
-      // Validate product selection
-      if (!selectedProduct) {
-        setError('Please select a product');
-        return;
-      }
-    }
-
-    setError(null);
-    setCurrentStep('version');
+  const removeFile = (file: File) => setFiles(prev => prev.filter(f => f !== file))
+  const clearAll = () => {
+    setFiles([])
+    setStates([])
+    setAggregate({ total: 0, completed: 0, failed: 0 })
+    setFinishedCount(null)
   }
 
-  const handleVersionStep = () => {
-    // Validate version name
-    if (!versionName.trim()) {
-      setError('Please enter a version/folder name');
-      return;
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(versionName)) {
-      setError('Version name can only contain letters, numbers, underscores, and hyphens');
-      return;
-    }
+  const startUpload = async () => {
+    setIsUploading(true)
+    setError(null)
+    setStates(files.map(() => ({ status: 'pending', progress: 0 })))
+    setAggregate({ total: files.length, completed: 0, failed: 0 })
 
-    setError(null);
-    setCurrentStep('upload');
+    const result = await uploadBatch(files, targetPath, {
+      concurrency: 5,
+      onFileProgress: (index, state) =>
+        setStates(prev => {
+          const next = [...prev]
+          next[index] = state
+          return next
+        }),
+      onAggregateProgress: setAggregate,
+    })
+
+    setIsUploading(false)
+    setFinishedCount(result.successCount)
+    if (result.failureCount > 0) {
+      setError(`${result.failureCount} file(s) failed to upload. You can retry the upload.`)
+    }
+    onComplete(result.successCount)
   }
 
-  const renderProductStep = () => (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium">Select Product</h3>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setIsCreatingNewProduct(!isCreatingNewProduct);
-              setSelectedProduct(null);
-              setSelectedVersion(null);
-              setVersions([]);
-            }}
-          >
-            {isCreatingNewProduct ? (
-              'Select Existing Product'
-            ) : (
-              <>
-                <Plus className="h-4 w-4 mr-2" />
-                Create New Product
-              </>
-            )}
-          </Button>
-        </div>
+  const allDone = finishedCount !== null && aggregate.failed === 0 && files.length > 0
+  const aggregatePct = aggregate.total > 0
+    ? Math.round(((aggregate.completed + aggregate.failed) / aggregate.total) * 100)
+    : 0
 
-        {isCreatingNewProduct ? (
-          <div className="space-y-2">
-            <Label htmlFor="newProduct">New Product Name</Label>
-            <Input
-              id="newProduct"
-              value={newProductName}
-              onChange={(e) => setNewProductName(e.target.value)}
-              placeholder="Enter product name"
-            />
-            <p className="text-sm text-muted-foreground">
-              Product name can only contain letters, numbers, and hyphens
-            </p>
-          </div>
-        ) : (
-          <Select
-            value={selectedProduct || ''}
-            onValueChange={handleProductSelect}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select a product" />
-            </SelectTrigger>
-            <SelectContent>
-              {products.map((product) => (
-                <SelectItem key={product.path} value={product.name}>
-                  {product.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
-
-      <div className="flex justify-end">
-        <Button
-          onClick={handleProductStep}
-          disabled={loading}
-        >
-          Next
-          <ArrowRight className="ml-2 h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  )
-
-  const renderVersionStep = () => (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium">Version/Folder Name</h3>
-          <Button
-            variant="ghost"
-            onClick={() => setCurrentStep('product')}
-          >
-            Back to Product Selection
-          </Button>
-        </div>
-
-        {!isCreatingNewProduct && versions.length > 0 && (
-          <div className="space-y-2">
-            <Label>Select Version to Match Pattern (Optional)</Label>
-            <Select
-              defaultValue="no-pattern"
-              value={selectedVersion?.name || 'no-pattern'}
-              onValueChange={(value) => {
-                if (value === 'no-pattern') {
-                  setSelectedVersion(null);
-                  setExistingFiles([]);
-                  setFilePattern('');
-                  return;
-                }
-                const version = versions.find(v => v.name === value);
-                if (version) handleVersionSelect(version);
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select a version or continue without pattern" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="no-pattern">Do not match pattern</SelectItem>
-                {versions.map((version) => (
-                  <SelectItem key={version.path} value={version.name}>
-                    {version.name} ({version.fileCount} files)
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <Label htmlFor="version">New Version Name</Label>
-          <Input
-            id="version"
-            value={versionName}
-            onChange={(e) => setVersionName(e.target.value)}
-            placeholder="Enter version/folder name"
-          />
-          <p className="text-sm text-muted-foreground">
-            Version name can only contain letters, numbers, underscores, and hyphens
-          </p>
-        </div>
-
-        <div className="rounded-lg border p-4 bg-muted">
-          <p className="text-sm font-medium">Files will be uploaded to:</p>
-          <p className="text-sm font-mono mt-1">
-            {isCreatingNewProduct ? newProductName : selectedProduct}/{versionName}/
-          </p>
-        </div>
-      </div>
-
-      {selectedVersion && (
-        <div className="rounded-lg border p-4 bg-blue-50 space-y-2">
-          <p className="text-sm font-medium text-blue-800">
-            Important: File Name Pattern Required
-          </p>
-          <p className="text-sm text-blue-700">
-            Your files must match the pattern from version "{selectedVersion.name}" (without file extension): <code className="bg-blue-100 px-1 py-0.5 rounded">{selectedVersion.pattern}</code>
-          </p>
-          <p className="text-sm text-blue-700">
-            Examples from {selectedVersion.name}:
-          </p>
-          <ul className="text-sm text-blue-700 list-disc list-inside">
-            {selectedVersion.files.slice(0, 3).map(file => {
-              const nameWithoutExt = file.split('/').pop()?.split('.')[0] || '';
-              return (
-                <li key={file} className="font-mono text-xs">{nameWithoutExt}</li>
-              );
-            })}
-            {selectedVersion.files.length > 3 && <li>...</li>}
-          </ul>
-          <p className="text-sm text-blue-700 mt-2">
-            Note: File extensions (e.g., .jpg, .png) are ignored during comparison. Only the filename without extension needs to match.
-          </p>
-        </div>
-      )}
-
-      {!selectedVersion && !isCreatingNewProduct && versions.length > 0 && (
-        <div className="rounded-lg border p-4 bg-yellow-50">
-          <p className="text-sm text-yellow-800">
-            You can select a version above to match its filename pattern, or continue without pattern matching.
-          </p>
-        </div>
-      )}
-
-      {!selectedVersion && !isCreatingNewProduct && versions.length === 0 && (
-        <div className="rounded-lg border p-4 bg-yellow-50">
-          <p className="text-sm text-yellow-800">
-            No existing versions found in this product. Your uploaded files will set the pattern for future uploads.
-          </p>
-        </div>
-      )}
-
-      <div className="flex justify-end">
-        <Button
-          onClick={handleVersionStep}
-          disabled={loading}
-        >
-          Next
-          <ArrowRight className="ml-2 h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  )
-
-  const renderUploadStep = () => (
-    <div className="space-y-6">
+  return (
+    <div className="space-y-3 rounded-lg border p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-medium">Upload Images</h3>
-        <Button
-          variant="ghost"
-          onClick={() => setCurrentStep('version')}
-        >
-          Back to Version Selection
-        </Button>
+        <div>
+          <h4 className="font-medium">{label}</h4>
+          <p className="text-xs font-mono text-muted-foreground">{targetPath}/</p>
+        </div>
+        {allDone && (
+          <span className="flex items-center gap-1 text-sm text-green-700">
+            <CheckCircle2 className="h-4 w-4" /> {finishedCount} uploaded
+          </span>
+        )}
       </div>
 
-      <div 
-        {...getRootProps()} 
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
+      {hint && <p className="text-xs text-blue-700 bg-blue-50 rounded p-2">{hint}</p>}
+
+      <div
+        {...getRootProps()}
+        className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors
           ${isDragActive ? 'border-primary bg-primary/5' : 'border-gray-200 hover:border-primary'}`}
       >
         <input {...getInputProps()} />
-        <Upload className="h-8 w-8 mx-auto mb-4 text-gray-400" />
+        <Upload className="h-6 w-6 mx-auto mb-2 text-gray-400" />
         <p className="text-sm text-gray-600">
-          {isDragActive ?
-            'Drop the files here...' :
-            'Drag & drop image files here, or click to select files'
-          }
-        </p>
-        <p className="text-xs text-gray-400 mt-2">
-          Supported formats: JPG, PNG, GIF, WebP
+          {isDragActive ? 'Drop the folder or files here…' : 'Drag & drop a folder (or images) here, or click to select files'}
         </p>
       </div>
 
-      {uploadingFiles.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">Files to Upload</h4>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setUploadingFiles([])}
-              disabled={isUploading}
-            >
-              Clear All
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {uploadingFiles.map((fileData) => (
-              <div 
-                key={fileData.file.name}
-                className="flex items-center gap-4 p-2 border rounded-lg"
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{fileData.file.name}</p>
-                  <p className="text-xs text-gray-500">
-                    {(fileData.file.size / 1024 / 1024).toFixed(2)} MB
-                  </p>
-                  {fileData.status === 'error' && (
-                    <p className="text-xs text-red-500">{fileData.error}</p>
-                  )}
-                </div>
-                <Progress 
-                  value={fileData.progress} 
-                  className="w-24"
-                />
-                {!isUploading && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeFile(fileData.file)}
-                  >
-                    <X className="h-4 w-4" />
+      <div className="flex items-center gap-2">
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={e => addFiles(Array.from(e.target.files ?? []))}
+        />
+        <Button type="button" variant="outline" size="sm" onClick={() => folderInputRef.current?.click()}>
+          <FolderOpen className="h-4 w-4 mr-2" /> Select folder
+        </Button>
+        {files.length > 0 && (
+          <span className="text-xs text-muted-foreground">{files.length} file(s) selected</span>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-red-500">{error}</p>}
+
+      {files.length > 0 && (
+        <div className="space-y-2">
+          {isUploading || finishedCount !== null ? (
+            <div className="space-y-1">
+              <Progress value={aggregatePct} />
+              <p className="text-xs text-muted-foreground">
+                {aggregate.completed} uploaded
+                {aggregate.failed > 0 ? `, ${aggregate.failed} failed` : ''} of {aggregate.total}
+              </p>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Ready to upload {files.length} file(s)</span>
+              <Button variant="ghost" size="sm" onClick={clearAll}>Clear all</Button>
+            </div>
+          )}
+
+          <div className="max-h-40 overflow-y-auto space-y-1">
+            {files.map((file, index) => (
+              <div key={`${file.name}-${index}`} className="flex items-center gap-2 text-xs">
+                <span className="flex-1 truncate">{basename(file)}</span>
+                {states[index]?.status === 'error' && <span className="text-red-500">failed</span>}
+                {states[index]?.status === 'completed' && <CheckCircle2 className="h-3 w-3 text-green-600" />}
+                {!isUploading && finishedCount === null && (
+                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeFile(file)}>
+                    <X className="h-3 w-3" />
                   </Button>
                 )}
               </div>
             ))}
           </div>
-          <Button
-            className="w-full"
-            onClick={uploadFiles}
-            disabled={isUploading || uploadingFiles.length === 0 || uploadingFiles.every(f => f.status === 'completed')}
-          >
-            {isUploading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
-              </>
-            ) : (
-              <>
-                <Upload className="mr-2 h-4 w-4" />
-                Upload {uploadingFiles.filter(f => f.status !== 'completed').length} {uploadingFiles.filter(f => f.status !== 'completed').length === 1 ? 'File' : 'Files'}
-              </>
-            )}
-          </Button>
+
+          {!allDone && (
+            <Button className="w-full" onClick={startUpload} disabled={isUploading || files.length === 0}>
+              {isUploading ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Uploading…</>
+              ) : finishedCount !== null ? (
+                <><Upload className="mr-2 h-4 w-4" /> Retry upload</>
+              ) : (
+                <><Upload className="mr-2 h-4 w-4" /> Upload {files.length} file(s)</>
+              )}
+            </Button>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+export function UploadManagement({ organizationId }: Props) {
+  const [step, setStep] = useState<Step>('details')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // "Comparison" maps to an S3 product folder.
+  const [products, setProducts] = useState<Product[]>([])
+  const [isNewComparison, setIsNewComparison] = useState(true)
+  const [newComparisonName, setNewComparisonName] = useState('')
+  const [selectedComparison, setSelectedComparison] = useState<string | null>(null)
+  const [batchAName, setBatchAName] = useState('')
+  const [batchBName, setBatchBName] = useState('')
+
+  // Upload progress per batch.
+  const [batchAUploaded, setBatchAUploaded] = useState(0)
+  const [batchBUploaded, setBatchBUploaded] = useState(0)
+
+  // Comparison-set creation on the done screen.
+  const [createSet, setCreateSet] = useState(true)
+  const [setName, setSetName] = useState('')
+  const [setCreated, setSetCreated] = useState(false)
+  const [creatingSet, setCreatingSet] = useState(false)
+
+  useEffect(() => {
+    const loadProducts = async () => {
+      setLoading(true)
+      try {
+        const response = await fetch('/api/organization/products')
+        if (!response.ok) throw new Error('Failed to load comparisons')
+        const data = await response.json()
+        if (!data.success) throw new Error(data.error || 'Failed to load comparisons')
+        setProducts(data.products)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load comparisons')
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadProducts()
+  }, [organizationId])
+
+  const comparisonName = isNewComparison ? newComparisonName : (selectedComparison ?? '')
+
+  const handleDetailsNext = () => {
+    if (isNewComparison) {
+      if (!newComparisonName.trim()) return setError('Please name the comparison')
+      if (!PRODUCT_NAME_RE.test(newComparisonName)) return setError('Comparison name can only contain letters, numbers, and hyphens')
+      if (products.some(p => p.name.toLowerCase() === newComparisonName.toLowerCase()))
+        return setError('A comparison with this name already exists')
+    } else if (!selectedComparison) {
+      return setError('Please select a comparison')
+    }
+    if (!batchAName.trim() || !batchBName.trim()) return setError('Please name both batches')
+    if (!VERSION_NAME_RE.test(batchAName) || !VERSION_NAME_RE.test(batchBName))
+      return setError('Batch names can only contain letters, numbers, underscores, and hyphens')
+    if (batchAName === batchBName) return setError('The two batches must have different names')
+
+    setError(null)
+    setSetName(comparisonName)
+    setStep('upload')
+  }
+
+  const handleFinish = async () => {
+    if (!createSet) {
+      setStep('done')
+      return
+    }
+    setCreatingSet(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/organization/comparison-sets/from-batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: setName || comparisonName,
+          product: comparisonName,
+          versionA: batchAName,
+          versionB: batchBName,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to create comparison set')
+      setSetCreated(true)
+      setStep('done')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create comparison set')
+    } finally {
+      setCreatingSet(false)
+    }
+  }
+
+  const resetWizard = () => {
+    setStep('details')
+    setIsNewComparison(true)
+    setNewComparisonName('')
+    setSelectedComparison(null)
+    setBatchAName('')
+    setBatchBName('')
+    setBatchAUploaded(0)
+    setBatchBUploaded(0)
+    setCreateSet(true)
+    setSetName('')
+    setSetCreated(false)
+    setError(null)
+  }
 
   if (loading && products.length === 0) {
     return (
@@ -613,39 +359,147 @@ export function UploadManagement({ organizationId }: Props) {
     )
   }
 
+  const bothUploaded = batchAUploaded > 0 && batchBUploaded > 0
+
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Upload Images</CardTitle>
+          <CardTitle>Set up a comparison</CardTitle>
           <CardDescription>
-            Upload images to your organization's S3 bucket. Files must match existing naming patterns for comparison.
+            Upload two batches of images — version A and version B — so your team can vote on which is higher quality.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           {error && (
-            <div className="mb-4 p-4 text-sm text-red-500 bg-red-50 rounded-lg">
-              {error}
+            <div className="p-4 text-sm text-red-500 bg-red-50 rounded-lg">{error}</div>
+          )}
+
+          {step === 'details' && (
+            <div className="space-y-6">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium">What are you comparing?</h3>
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setIsNewComparison(!isNewComparison)
+                      setSelectedComparison(null)
+                      setNewComparisonName('')
+                    }}
+                  >
+                    {isNewComparison ? 'Use existing comparison' : (
+                      <><Plus className="h-4 w-4 mr-2" /> New comparison</>
+                    )}
+                  </Button>
+                </div>
+
+                {isNewComparison ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="comparison">Comparison name</Label>
+                    <Input
+                      id="comparison"
+                      value={newComparisonName}
+                      onChange={e => setNewComparisonName(e.target.value)}
+                      placeholder="e.g. portraits-q3"
+                    />
+                    <p className="text-sm text-muted-foreground">Letters, numbers, and hyphens only.</p>
+                  </div>
+                ) : (
+                  <Select value={selectedComparison ?? ''} onValueChange={setSelectedComparison}>
+                    <SelectTrigger><SelectValue placeholder="Select a comparison" /></SelectTrigger>
+                    <SelectContent>
+                      {products.map(p => (
+                        <SelectItem key={p.path} value={p.name}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="batchA">Batch A name</Label>
+                  <Input id="batchA" value={batchAName} onChange={e => setBatchAName(e.target.value)} placeholder="e.g. baseline" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="batchB">Batch B name</Label>
+                  <Input id="batchB" value={batchBName} onChange={e => setBatchBName(e.target.value)} placeholder="e.g. new-model" />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={handleDetailsNext}>Next <ArrowRight className="ml-2 h-4 w-4" /></Button>
+              </div>
             </div>
           )}
 
-          {successMessage && (
-            <div className="mb-4 p-4 text-sm text-green-700 bg-green-50 rounded-lg">
-              {successMessage}
+          {step === 'upload' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium">Upload images</h3>
+                <Button variant="ghost" onClick={() => setStep('details')}>
+                  <ArrowLeft className="h-4 w-4 mr-2" /> Back
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <BatchUploader
+                  label={`Batch A — ${batchAName}`}
+                  targetPath={`${comparisonName}/${batchAName}`}
+                  onComplete={setBatchAUploaded}
+                />
+                <BatchUploader
+                  label={`Batch B — ${batchBName}`}
+                  targetPath={`${comparisonName}/${batchBName}`}
+                  hint="Reuse Batch A's filenames so images pair up by name during evaluation."
+                  onComplete={setBatchBUploaded}
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={handleFinish} disabled={!bothUploaded || creatingSet}>
+                  {creatingSet ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Finishing…</> : 'Finish'}
+                  {!creatingSet && <ArrowRight className="ml-2 h-4 w-4" />}
+                </Button>
+              </div>
+
+              {bothUploaded && (
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="createSet" checked={createSet} onCheckedChange={v => setCreateSet(Boolean(v))} />
+                    <Label htmlFor="createSet">Create a comparison set so members can evaluate right away</Label>
+                  </div>
+                  {createSet && (
+                    <div className="space-y-2">
+                      <Label htmlFor="setName">Comparison set name</Label>
+                      <Input id="setName" value={setName} onChange={e => setSetName(e.target.value)} />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          {currentStep === 'product' && renderProductStep()}
-          {currentStep === 'version' && renderVersionStep()}
-          {currentStep === 'upload' && renderUploadStep()}
+          {step === 'done' && (
+            <div className="space-y-6 text-center py-6">
+              <CheckCircle2 className="h-12 w-12 mx-auto text-green-600" />
+              <div>
+                <h3 className="text-lg font-medium">Comparison ready</h3>
+                <p className="text-sm text-muted-foreground">
+                  Uploaded {batchAUploaded} image(s) to Batch A and {batchBUploaded} to Batch B.
+                  {setCreated && ' Members can now evaluate it from the comparison sets.'}
+                </p>
+              </div>
+              <Button onClick={resetWizard}>Set up another comparison</Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <div className="text-sm text-muted-foreground">
-        <p>Maximum file size: {MAX_FILE_SIZE / 1024 / 1024}MB</p>
-        <p>Maximum number of files: {MAX_FILE_COUNT}</p>
-        <p>Supported formats: JPG, PNG, GIF, WebP</p>
+        <p>Max file size: {MAX_FILE_SIZE / 1024 / 1024}MB · Max {MAX_FILE_COUNT} files per batch · JPG, PNG, GIF, WebP</p>
       </div>
     </div>
   )
-} 
+}
