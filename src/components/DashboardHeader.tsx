@@ -83,18 +83,28 @@ export function DashboardHeader() {
               <span className="text-xl font-bold">OptiQA</span>
             </Link>
             <div className="flex items-center gap-4">
-              <Link 
-                href="/comparison" 
+              <Link
+                href="/comparison"
                 className={`text-sm ${
                   pathname === "/comparison"
                     ? "text-[#00B4D8] font-medium"
                     : "text-gray-600 hover:text-gray-900"
                 }`}
               >
-                New Comparison
+                Grade
               </Link>
               {session && (
                 <>
+                  <Link
+                    href="/dashboard/new-comparison"
+                    className={`text-sm ${
+                      pathname === "/dashboard/new-comparison"
+                        ? "text-[#00B4D8] font-medium"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Create comparison
+                  </Link>
                   <Link
                     href="/dashboard/comparisons"
                     className={`text-sm ${

@@ -37,6 +37,7 @@ interface DirectorySetupProps {
   selectedDirectories: { v1: string | null; v2: string | null };
   onDirectoriesSelected: (directories: string[]) => void;
   onComparisonSetSelect?: (setId: string | null) => void;
+  autoSelectSetId?: string;
 }
 
 export const DirectorySetup = ({
@@ -57,7 +58,8 @@ export const DirectorySetup = ({
   onPersistentRatingsChange,
   selectedDirectories,
   onDirectoriesSelected,
-  onComparisonSetSelect
+  onComparisonSetSelect,
+  autoSelectSetId
 }: DirectorySetupProps) => {
   if (!setupMode) {
     return <SetupModeSelection onModeSelect={onSetupModeChange} />;
@@ -148,6 +150,7 @@ export const DirectorySetup = ({
           onStart={onStart}
           isReadyToStart={isReadyToStart}
           onComparisonSetSelect={onComparisonSetSelect}
+          autoSelectSetId={autoSelectSetId}
         />
       </div>
     );

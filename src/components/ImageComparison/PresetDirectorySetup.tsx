@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ interface PresetDirectorySetupProps {
   onStart: () => void;
   isReadyToStart: boolean;
   onComparisonSetSelect?: (setId: string | null) => void;
+  autoSelectSetId?: string;
 }
 
 interface PresetDirectory {
@@ -80,7 +81,8 @@ export const PresetDirectorySetup = ({
   directoryNames,
   onStart,
   isReadyToStart,
-  onComparisonSetSelect
+  onComparisonSetSelect,
+  autoSelectSetId
 }: PresetDirectorySetupProps) => {
   const [directories, setDirectories] = useState<PresetDirectory[]>([]);
   const [comparisonSets, setComparisonSets] = useState<ComparisonSet[]>([]);
@@ -250,6 +252,19 @@ export const PresetDirectorySetup = ({
       setLoading(false);
     }
   };
+
+  // Deep-link: auto-select the requested comparison set once it has loaded.
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (!autoSelectSetId || autoSelectedRef.current) return;
+    const match = comparisonSets.find(s => s.id === autoSelectSetId);
+    if (match) {
+      autoSelectedRef.current = true;
+      handleComparisonSetSelect(match);
+    }
+    // handleComparisonSetSelect is stable enough for this one-shot guarded effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSelectSetId, comparisonSets]);
 
   // Get unique products from directories
   const products = Array.from(new Set(directories.map(dir => dir.product))).filter(Boolean);

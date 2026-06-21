@@ -25,17 +25,12 @@ export async function POST(request: Request) {
       );
     }
 
+    // Any approved member of the active org may upload images
+    // (getActiveOrganization already requires isApprovedMember = true).
     const activeOrg = await getActiveOrganization(session.user.id);
     if (!activeOrg) {
       return NextResponse.json(
         { success: false, error: 'No active organization' },
-        { status: 403 },
-      );
-    }
-
-    if (!activeOrg.isAdmin) {
-      return NextResponse.json(
-        { success: false, error: 'Only organization admins can upload files' },
         { status: 403 },
       );
     }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DirectorySetup } from './DirectorySetup';
@@ -8,10 +8,17 @@ import { useZoomPan } from './hooks/useZoomPan';
 import { Button } from "@/components/ui/button";
 import type { ImageFile } from './types';
 
-export const ImageComparison = () => {
+interface ImageComparisonProps {
+  /** When set (e.g. from `/comparison?set=<id>`), open straight into the preset
+   *  comparison set and auto-start grading once its images load. */
+  initialSetId?: string;
+}
+
+export const ImageComparison = ({ initialSetId }: ImageComparisonProps = {}) => {
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [useScoreBlur, setUseScoreBlur] = useState(true);
-  const [setupMode, setSetupMode] = useState<'preset' | 'local' | null>(null);
+  const [setupMode, setSetupMode] = useState<'preset' | 'local' | null>(initialSetId ? 'preset' : null);
+  const autoStartedRef = useRef(false);
   const zoomPanState = useZoomPan();
   const {
     scores,
@@ -59,6 +66,14 @@ export const ImageComparison = () => {
   };
 
   const isReadyToStart = imageFiles.v1.length > 0 && imageFiles.v2.length > 0;
+
+  // Deep-link: once the auto-selected set's images have loaded, begin grading.
+  useEffect(() => {
+    if (initialSetId && isReadyToStart && !isSetupComplete && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      handleStart();
+    }
+  });
 
   const setupDirectory = async (version: 'v1' | 'v2', files?: ImageFile[], directoryPath?: string) => {
     if (setupMode === 'local') {
@@ -120,6 +135,7 @@ export const ImageComparison = () => {
               selectedDirectories={selectedDirectories}
               onDirectoriesSelected={() => {}}
               onComparisonSetSelect={setComparisonSetId}
+              autoSelectSetId={initialSetId}
             />
           ) : (
             <ComparisonInterface

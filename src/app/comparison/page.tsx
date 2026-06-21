@@ -1,14 +1,17 @@
 "use client"
 
+import { Suspense } from "react"
 import { useSession } from "next-auth/react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ImageComparison } from "@/components/ImageComparison"
 import { Card, CardContent, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
-export default function ComparisonPage() {
+function ComparisonPageInner() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialSetId = searchParams.get('set') ?? undefined
 
   // Show loading state only when checking existing session
   if (status === "loading") {
@@ -43,8 +46,16 @@ export default function ComparisonPage() {
             </CardContent>
           </Card>
         )}
-        <ImageComparison />
+        <ImageComparison initialSetId={initialSetId} />
       </main>
     </div>
   )
-} 
+}
+
+export default function ComparisonPage() {
+  return (
+    <Suspense fallback={null}>
+      <ComparisonPageInner />
+    </Suspense>
+  )
+}

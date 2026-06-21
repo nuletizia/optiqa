@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Separator } from "@/components/ui/separator"
+import { ComparisonsToGrade } from "@/components/dashboard/ComparisonsToGrade"
 
 export default function Dashboard() {
   const { data: session } = useSession()
@@ -30,15 +31,23 @@ export default function Dashboard() {
             )}
           </CardHeader>
           <CardContent className="space-y-8">
-            {/* Primary Action */}
+            {/* Org members: the comparisons available to grade */}
+            {hasOrganization && (
+              <>
+                <ComparisonsToGrade />
+                <Separator />
+              </>
+            )}
+
+            {/* Primary Action — ad-hoc comparison without a preset set */}
             <Card>
               <CardHeader>
-                <CardTitle>Start New Comparison</CardTitle>
-                <CardDescription>Compare two sets of images and get quality assessment scores</CardDescription>
+                <CardTitle>Start an ad-hoc comparison</CardTitle>
+                <CardDescription>Compare two folders directly without setting up a comparison first</CardDescription>
               </CardHeader>
               <CardContent>
                 <Link href="/comparison">
-                  <Button className="w-full" size="lg">Start New Comparison</Button>
+                  <Button className="w-full" size="lg">Start ad-hoc comparison</Button>
                 </Link>
               </CardContent>
             </Card>
