@@ -1,5 +1,6 @@
 import { auth } from '@/auth'
 import { prisma } from '@/lib/prisma'
+import { generateInviteCode } from '@/lib/invite-code'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { revalidatePath } from 'next/cache'
@@ -72,20 +73,10 @@ export default async function OrganizationInvitesPage() {
       return redirect('/dashboard/organization')
     }
 
-    // Generate a random 8-character code
-    const generateCode = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-      let result = ''
-      for (let i = 0; i < 8; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length))
-      }
-      return result
-    }
-
     // Create the invite code
     await prisma.organizationInviteCode.create({
       data: {
-        code: generateCode(),
+        code: generateInviteCode(),
         organizationId,
         createdById: session.user.id
       }

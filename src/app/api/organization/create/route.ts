@@ -1,6 +1,7 @@
 import { auth } from "@/auth"
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { generateInviteCode } from "@/lib/invite-code"
 
 export async function POST(request: Request) {
   try {
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
     // Generate an initial invite code for the organization
     const inviteCode = await prisma.organizationInviteCode.create({
       data: {
-        code: `ORG-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+        code: generateInviteCode("ORG"),
         organizationId: organization.id,
         createdById: session.user.id
       }
