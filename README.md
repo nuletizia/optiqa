@@ -231,3 +231,7 @@ npm test && npm run build` must pass, and shared logic belongs in `src/lib/` wit
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+## Credits
+
+Built by [Nunzio Alexandro Letizia](https://letizia.tech).
