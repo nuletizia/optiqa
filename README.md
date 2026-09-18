@@ -8,10 +8,23 @@ language models: show people **pairs** of images, ask only *which is better*, an
 **Bradley-Terry / Elo-style** model turn thousands of cheap binary judgements into a single
 ranking per batch.
 
-![OptiQA comparison interface — two image versions side by side with zoom, pan and tie controls](public/product-image.jpg)
-
-<sub>The evaluation screen: two versions of the same source image, synced zoom/pan for pixel-level
-inspection, and keyboard-driven voting.</sub>
+<table>
+<tr>
+<td width="39%" valign="top">
+<img src="public/product-image.jpg" alt="OptiQA comparison interface: two image versions side by side with zoom, pan and tie controls">
+</td>
+<td width="61%" valign="top">
+<img src="public/ratings-overview.png" alt="OptiQA live ratings: version v300 scoring 1268 against v241 at 732 across 262 comparisons">
+</td>
+</tr>
+<tr>
+<td valign="top"><sub><b>1 · Vote.</b> Two versions of the same source image, with synced zoom/pan for
+pixel-level inspection, a tie option, and keyboard-driven voting.</sub></td>
+<td valign="top"><sub><b>2 · Rank.</b> Strengths aggregated across the organization. Here <code>v300</code>
+overtakes <code>v241</code>, 1268 to 732, on 262 head-to-head comparisons from 5 raters — a verdict no
+single reviewer could have given you.</sub></td>
+</tr>
+</table>
 
 [![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
@@ -22,8 +35,7 @@ inspection, and keyboard-driven voting.</sub>
 
 > Built as an internal PiktID tool starting **January 2025** to answer a recurring question —
 > *"is this new model checkpoint actually better than the last one?"* — and open-sourced in
-> **2026** after a security review and refactor (credential removal, server-side S3 access,
-> a shared library layer, tests, and a strict build).
+> **2026** after a security review and refactor.
 
 ---
 
