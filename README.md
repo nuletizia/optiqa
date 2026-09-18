@@ -1,19 +1,81 @@
 # OptiQA — Image Quality Assessment Tool (by PiktID)
 
-OptiQA is an internal tool for **measuring the quality of batches of images and comparing
-two versions of a batch against each other**. Rather than scoring images on an absolute
-scale (which is unreliable for a subjective task like image quality), it uses a **pairwise,
-image-arena-style mechanism**: approved members of an organization are shown pairs of images
-(version 1 vs version 2), pick the better one (or call a tie), and each vote updates a
-**Bradley-Terry / Elo-style strength score**. After enough votes, the aggregate score
-reveals which version/batch is higher quality.
+**Rank image batches by quality using head-to-head votes instead of absolute scores.**
 
-This is conceptually similar to how LMArena / Chatbot Arena ranks models through head-to-head
-votes — applied here to image batches.
+Scoring image quality on a 1–10 scale is unreliable — raters disagree, drift over time, and
+anchor differently. OptiQA sidesteps the problem the way [LMArena](https://lmarena.ai) ranks
+language models: show people **pairs** of images, ask only *which is better*, and let a
+**Bradley-Terry / Elo-style** model turn thousands of cheap binary judgements into a single
+ranking per batch.
 
-> Originally developed as an internal PiktID tool starting **January 2025**; published as
-> open source in **2026** after a security review and refactor (credential removal,
-> server-side S3 access, shared library layer, tests, and a strict build).
+![OptiQA comparison interface — two image versions side by side with zoom, pan and tie controls](public/product-image.jpg)
+
+<sub>The evaluation screen: two versions of the same source image, synced zoom/pan for pixel-level
+inspection, and keyboard-driven voting.</sub>
+
+[![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)](https://nextjs.org)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?logo=prisma&logoColor=white)](https://www.prisma.io)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
+> Built as an internal PiktID tool starting **January 2025** to answer a recurring question —
+> *"is this new model checkpoint actually better than the last one?"* — and open-sourced in
+> **2026** after a security review and refactor (credential removal, server-side S3 access,
+> a shared library layer, tests, and a strict build).
+
+---
+
+## The problem it solves
+
+You retrain an image model and produce a new batch of outputs. Is version 2 better than
+version 1? Eyeballing a few samples is anecdotal, and asking raters for absolute scores gives
+you noise. What you actually want is a **statistically meaningful, aggregated preference**
+across a whole batch and across multiple raters.
+
+OptiQA gives you exactly one number per version, built from votes that are trivially easy to
+cast.
+
+## How it works
+
+Every version (directory of images) starts at a strength of **1000**. Each vote updates both
+sides, scaled by how *surprising* the result was — an upset moves the scores more than an
+expected win.
+
+```
+expected(A beats B) = strength(A) / (strength(A) + strength(B))
+
+on a win:   change   = K × (1 − expected(winner))
+            winner  += change
+            loser   -= change          # floored at 1
+
+on a tie:   uses K/2, nudging both sides toward their expected probability
+```
+
+with `K = 32`. The math lives in [`src/lib/rating.ts`](./src/lib/rating.ts) as pure,
+side-effect-free functions — which is what makes it unit-testable in isolation
+([`rating.test.ts`](./src/lib/rating.test.ts), 13 cases). The React layer
+(`useBradleyTerry.ts`) is a thin stateful wrapper over it.
+
+Ratings are tracked **per user** and aggregated **globally per organization**, so you can see
+both individual preference and batch-level consensus.
+
+### Flow
+
+```mermaid
+flowchart LR
+    S3[("S3 bucket<br/>org/product/version/")] --> P[Pair generation<br/>matched by filename<br/>Fisher-Yates shuffled]
+    P --> UI[Comparison UI<br/>zoom · pan · tie · mask overlay]
+    UI -->|vote| BT[Bradley-Terry<br/>update]
+    BT --> DB[("DirectoryRating<br/>per user + global")]
+    DB --> V[Dashboards<br/>histograms · history]
+```
+
+Batch A and Batch B are paired by **base filename**, so `cat_01.png` in v1 is always compared
+against `cat_01.png` in v2 — you're measuring the version difference, not image-to-image
+variance. Pair order is shuffled, and left/right placement is randomized per pair to cancel
+out position bias.
 
 ## Key features
 
@@ -22,9 +84,11 @@ votes — applied here to image batches.
 - **Bradley-Terry / Elo scoring** per directory (version), aggregated per user and globally
   across an organization.
 - **Organization-scoped access** — only approved members of an org can evaluate and see that
-  org's ratings. Joining is gated by invite codes (see `INVITE_CODE_SYSTEM.md`).
-- **Comparison sets** — admins can predefine v1-vs-v2 directory pairs for members to evaluate.
-- **S3-backed image storage** browsed by `organization/product/version` folder structure.
+  org's ratings. Joining is gated by invite codes (see [`INVITE_CODE_SYSTEM.md`](./INVITE_CODE_SYSTEM.md)).
+- **Comparison sets** — admins can predefine v1-vs-v2 directory pairs for members to evaluate,
+  with a per-member "comparisons to grade" inbox.
+- **S3-backed image storage** browsed by `organization/product/version` folder structure,
+  with presigned URLs so credentials never reach the browser.
 - **Ratings dashboards & histograms** to inspect score distributions and history.
 
 ## Tech stack
@@ -35,14 +99,12 @@ PostgreSQL · NextAuth v5 (Google OAuth) · AWS S3 · Vercel KV · chart.js. Dep
 For an architectural deep-dive (domain model, rating algorithm, comparison flow, API routes,
 auth), see **[CLAUDE.md](./CLAUDE.md)**.
 
-## Prerequisites
-
-- Node.js 18+ (repo predates current LTS; modern Node works)
-- PostgreSQL (local via Homebrew `postgresql@15`, or a hosted DB)
-- An AWS account with an S3 bucket
-- Google OAuth credentials (for sign-in)
+---
 
 ## Quick start (one command, Dockerized DB)
+
+**Prerequisites:** Node.js 18+, plus an AWS S3 bucket and Google OAuth credentials if you want
+image loading and sign-in to work.
 
 If you have [mise](https://mise.jdx.dev) and Docker Desktop, you don't need to install or
 manage Postgres yourself — a containerized DB is started, migrated, and torn down for you:
@@ -70,6 +132,13 @@ npm run db:down     # stop the DB container
 > of Docker, skip these and follow the manual setup below.
 
 ## Setup (manual / bring-your-own Postgres)
+
+**Prerequisites:**
+
+- Node.js 18+ (repo predates current LTS; modern Node works)
+- PostgreSQL (local via Homebrew `postgresql@15`, or a hosted DB)
+- An AWS account with an S3 bucket
+- Google OAuth credentials (for sign-in)
 
 1. Install dependencies:
    ```bash
@@ -115,7 +184,7 @@ npm run build      # prisma generate && next build (strict: type + lint errors f
 npm run start      # production server
 npm run lint       # next lint
 npm run typecheck  # tsc --noEmit
-npm test           # vitest unit tests (rating math, path normalization)
+npm test           # vitest unit tests (rating math, path normalization, invite codes, upload)
 ```
 
 (With mise: `mise run dev`, `mise run stop`, `mise run db-reset`, `mise run check`.)
@@ -135,10 +204,18 @@ production data.
   never bundled into client code.
 - **Never commit real credentials.** All `.env*` files except `.env.example` are gitignored.
   Database dumps (`*.dump`, `*.sql` backups) are gitignored too — they can contain tokens/PII.
+- **Invite codes are generated with a CSPRNG** (`crypto.randomInt`, see
+  [`src/lib/invite-code.ts`](./src/lib/invite-code.ts)) — redeeming one grants org membership,
+  so codes are treated as secrets.
 - Use an IAM user scoped to the single S3 bucket with least-privilege permissions; rotate
   keys regularly; enable bucket encryption and CORS for your domain.
 - See [SECURITY.md](./SECURITY.md) for how to report vulnerabilities.
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). In short: `npm run lint && npm run typecheck &&
+npm test && npm run build` must pass, and shared logic belongs in `src/lib/` with unit tests.
+
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).
